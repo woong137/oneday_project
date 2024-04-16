@@ -138,15 +138,11 @@ class Environments(object):
         Texts = MarkerArray()
 
         for i in range(len(self.vehicles)):
-
+            # veh_data = [lane_id, target_lane_id, s, d, global_x, global_y, global_yaw, v, yawrate, mode, ax, steer, length, width]
             veh_data = np.array(self.vehicles[i][self.time-10:self.time+1])
 
-            """
-            To Do 
-            i번째 veh history data인 veh_data를 활용하여 LC intention에 대한 pred 수행 
-            
-            """
-            
+            # To Do
+            # i번째 veh history data인 veh_data를 활용하여 LC intention에 대한 pred 수행
 
             pred = "LC"
             gt = "LC" if self.vehicles[i][self.time][9] == 1 else "LK"
