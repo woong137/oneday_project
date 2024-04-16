@@ -132,19 +132,64 @@ class Environments(object):
 
         self.history_pub.publish(ObjectsData)
 
+    # HMM에 사용할 데이터 준비하는 함수
+    def prepare_data(self, veh_data):
+        # 예측에 필요한 관련 특징만 고려합니다.
+        # [lane_id, s, d, global_x, global_y, global_yaw, v, length, width]
+        features = veh_data[:, [0, 2, 3, 4, 5, 6, 7, 12, 13]]
+        return features
+
+    # HMM을 훈련하는 함수
+    def train_hmm(self, data):
+        hmm_model = GaussianHMM(n_components=2)  # 두 가지 가능한 상태를 가정합니다: LC와 LK
+        hmm_model.fit(data)
+        return hmm_model
+
+    # 훈련된 HMM을 사용하여 예측하는 함수
+    def predict_hmm(self, hmm_model, data):
+        # 가장 가능성 있는 숨겨진 상태의 시퀀스를 예측합니다.
+        predicted_states = hmm_model.predict(data)
+        # 예측된 상태를 해당 레이블로 변환합니다.
+        predicted_labels = ["LC" if state ==
+                            1 else "LK" for state in predicted_states]
+        return predicted_labels
+
+    # HMM을 사용하여 LC 의도를 예측하는 함수
+    def predict_lc_intention(self, veh_data):
+        # HMM에 사용할 데이터 준비
+        data = self.prepare_data(veh_data)
+        # HMM 훈련
+        hmm_model = self.train_hmm(data)
+        # 훈련된 HMM을 사용하여 예측
+        predicted_labels = self.predict_hmm(hmm_model, data)
+        return predicted_labels
+
     def callback_result(self, data):
 
         Objects = MarkerArray()
         Texts = MarkerArray()
 
         for i in range(len(self.vehicles)):
-            # veh_data = [lane_id, target_lane_id, s, d, global_x, global_y, global_yaw, v, yawrate, mode, ax, steer, length, width]
+            # veh_data[t] = [lane_id, target_lane_id, s, d, global_x, global_y, global_yaw, v, yawrate, mode, ax, steer, length, width]
             veh_data = np.array(self.vehicles[i][self.time-10:self.time+1])
+
+            # d를 lane_id 기준으로 수정
+            for j in range(len(veh_data)):
+                if veh_data[j][0] == 1:
+                    veh_data[j][3] = veh_data[j][3] - self.D_list[1]
+                elif veh_data[j][0] == 2:
+                    veh_data[j][3] = veh_data[j][3] - self.D_list[2]
+                elif veh_data[j][0] == 3:
+                    veh_data[j][3] = veh_data[j][3] - self.D_list[3]
+
+            pred = self.predict_lc_intention(veh_data)
+            # pred에 확률이 높은 값
+            pred = max(set(pred), key=pred.count)
 
             # To Do
             # i번째 veh history data인 veh_data를 활용하여 LC intention에 대한 pred 수행
 
-            pred = "LC"
+            # Mode 0 : LK, Mode 1 : LC
             gt = "LC" if self.vehicles[i][self.time][9] == 1 else "LK"
 
             q = tf.transformations.quaternion_from_euler(
