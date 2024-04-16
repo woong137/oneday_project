@@ -82,11 +82,11 @@ class Environments(object):
         #         #                          veh.d, veh.pose[0], veh.pose[1], veh.pose[2], veh.v, veh.yawrate, MODE[veh.mode], veh.ax, veh.steer, veh.length, veh.width])
 
         ########################## HMM ###############################
-        with open("/home/mmc_ubuntu/Work/system-infra/Simulation/log/model_LC.pickle", 'rb') as f:
-            self.hmm_lc = pickle.load(f)
+        # with open("/home/mmc_ubuntu/Work/system-infra/Simulation/log/model_LC.pickle", 'rb') as f:
+        #     self.hmm_lc = pickle.load(f)
 
-        with open("/home/mmc_ubuntu/Work/system-infra/Simulation/log/model_LK.pickle", 'rb') as f:
-            self.hmm_lk = pickle.load(f)
+        # with open("/home/mmc_ubuntu/Work/system-infra/Simulation/log/model_LK.pickle", 'rb') as f:
+        #     self.hmm_lk = pickle.load(f)
 
     def loop(self):
 
@@ -146,6 +146,7 @@ class Environments(object):
             i번째 veh history data인 veh_data를 활용하여 LC intention에 대한 pred 수행 
             
             """
+            
 
             pred = "LC"
             gt = "LC" if self.vehicles[i][self.time][9] == 1 else "LK"
