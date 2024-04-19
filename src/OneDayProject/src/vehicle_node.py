@@ -141,7 +141,7 @@ class Environments(object):
         """
         w = 3.4
         v_max = 1.133
-
+        ##TODO: 차선이 양쪽에 2개니까 2개의 확률을 계산해서 더해야 할까
         # 현재 차량의 횡방향 거리가 d일 때 차선 유지(LK)일 확률 분포
         def p_lk_given_d(d): return multivariate_normal.pdf(d, 0, w/4)
         # 현재 차량의 횡방향 거리가 d일 때 차선 변경(LC)일 확률 분포
@@ -169,6 +169,7 @@ class Environments(object):
             P_v_given_lk_d.append(p_v_given_lk_d(v_d, d))
             P_v_given_lc_d.append(p_v_given_lc_d(v_d, d))
 
+            # P(M|A, C) = P(A|C, M)P(M|C) / Σ_m(P(A|C, M_m))
             p_lk = np.array(P_v_given_lk_d) * np.array(P_lk_given_d) / \
                 (np.array(P_v_given_lk_d) + np.array(P_v_given_lc_d))
             p_lc = np.array(P_v_given_lc_d) * np.array(P_lc_given_d) / \
@@ -265,6 +266,10 @@ class Environments(object):
                 self.vehicles[i][self.time][4], self.vehicles[i][self.time][5], 3)
 
             Texts.markers.append(text)
+            # i = 11인 차량 데이터 출력
+            if i == 11:
+                print("True : ", gt, " / Pred : ", pred[0])
+                print("LC일 확률: ", pred[1], " / LK일 확률: ", pred[2])
 
         self.sur_pose_plot.publish(Objects)
         self.text_plot.publish(Texts)
