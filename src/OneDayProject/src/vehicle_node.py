@@ -21,6 +21,7 @@ from visualization_msgs.msg import MarkerArray, Marker
 
 from std_msgs.msg import Float32, Float64, Header, ColorRGBA, UInt8, String, Float32MultiArray, Int32MultiArray
 from hmmlearn.hmm import GMMHMM, GaussianHMM
+from scipy.stats import multivariate_normal
 
 from msgs.msg import dataset_array_msg, dataset_msg, map_array_msg, map_msg, point_msg
 
@@ -132,37 +133,54 @@ class Environments(object):
 
         self.history_pub.publish(ObjectsData)
 
-    # HMM에 사용할 데이터 준비하는 함수
-    def prepare_data(self, veh_data):
-        # 예측에 필요한 관련 특징만 고려합니다.
-        # [lane_id, s, d, global_x, global_y, global_yaw, v, length, width]
-        features = veh_data[:, [0, 2, 3, 4, 5, 6, 7, 12, 13]]
-        return features
-
-    # HMM을 훈련하는 함수
-    def train_hmm(self, data):
-        hmm_model = GaussianHMM(n_components=2)  # 두 가지 가능한 상태를 가정합니다: LC와 LK
-        hmm_model.fit(data)
-        return hmm_model
-
-    # 훈련된 HMM을 사용하여 예측하는 함수
-    def predict_hmm(self, hmm_model, data):
-        # 가장 가능성 있는 숨겨진 상태의 시퀀스를 예측합니다.
-        predicted_states = hmm_model.predict(data)
-        # 예측된 상태를 해당 레이블로 변환합니다.
-        predicted_labels = ["LC" if state ==
-                            1 else "LK" for state in predicted_states]
-        return predicted_labels
-
-    # HMM을 사용하여 LC 의도를 예측하는 함수
     def predict_lc_intention(self, veh_data):
-        # HMM에 사용할 데이터 준비
-        data = self.prepare_data(veh_data)
-        # HMM 훈련
-        hmm_model = self.train_hmm(data)
-        # 훈련된 HMM을 사용하여 예측
-        predicted_labels = self.predict_hmm(hmm_model, data)
-        return predicted_labels
+        # veh_data[t] = [lane_id, target_lane_id, s, d, global_x, global_y, global_yaw, v, yawrate, mode, ax, steer, length, width]
+        # t: 0 ~ 10, 10: 현재 시간, 0 ~ 9: 과거 시간
+        """
+        Bayesian Network function and parameter define
+        """
+        w = 3.4
+        v_max = 1.133
+
+        # 현재 차량의 횡방향 거리가 d일 때 차선 유지(LK)일 확률 분포
+        def p_lk_given_d(d): return multivariate_normal.pdf(d, 0, w/4)
+        # 현재 차량의 횡방향 거리가 d일 때 차선 변경(LC)일 확률 분포
+        def p_lc_given_d(d): return multivariate_normal.pdf(d, w/2, w/4)
+        # 현재 차량의 횡방향 거리가 d이고, 차선 변경(LK)일 때, 횡방향 속도가 v일 확률 분포
+        def p_v_given_lk_d(v, d): return multivariate_normal.pdf(
+            v, (-(2/w)**2*v_max*(d)**2), 0.4)
+        # 현재 차량의 횡방향 거리가 d이고, 차선 변경(LC)일 때, 횡방향 속도가 v일 확률 분포
+        def p_v_given_lc_d(v, d): return multivariate_normal.pdf(
+            v, (-(2/w)**2*v*(d-w/2)**2+v_max), 0.4)
+
+        P_lk_given_d = []
+        P_lc_given_d = []
+
+        P_v_given_lk_d = []
+        P_v_given_lc_d = []
+
+        for t in range(1, len(veh_data) - 1):
+            d = veh_data[t][3]
+            w = 3.4
+            v_d = (veh_data[t][3] - veh_data[t-1][3]) / 0.05
+
+            P_lk_given_d.append(p_lk_given_d(d))
+            P_lc_given_d.append(p_lc_given_d(d))
+            P_v_given_lk_d.append(p_v_given_lk_d(v_d, d))
+            P_v_given_lc_d.append(p_v_given_lc_d(v_d, d))
+
+            p_lk = np.array(P_v_given_lk_d) * np.array(P_lk_given_d) / \
+                (np.array(P_v_given_lk_d) + np.array(P_v_given_lc_d))
+            p_lc = np.array(P_v_given_lc_d) * np.array(P_lc_given_d) / \
+                (np.array(P_v_given_lk_d) + np.array(P_v_given_lc_d))
+
+        # 의도 파악
+        if p_lc[-1] > p_lk[-1]:
+            predicted_labels = "LC"
+        else:
+            predicted_labels = "LK"
+
+        return predicted_labels, p_lc[-1], p_lk[-1]
 
     def callback_result(self, data):
 
@@ -170,10 +188,27 @@ class Environments(object):
         Texts = MarkerArray()
 
         for i in range(len(self.vehicles)):
+            # ToDo: i번째 veh history data인 veh_data를 활용하여 LC intention에 대한 pred 수행
+
             # veh_data[t] = [lane_id, target_lane_id, s, d, global_x, global_y, global_yaw, v, yawrate, mode, ax, steer, length, width]
+            # veh_data[t][0] = lane_id
+            # veh_data[t][1] = target_lane_id
+            # veh_data[t][2] = s
+            # veh_data[t][3] = d
+            # veh_data[t][4] = global_x
+            # veh_data[t][5] = global_y
+            # veh_data[t][6] = global_yaw
+            # veh_data[t][7] = v
+            # veh_data[t][8] = yawrate
+            # veh_data[t][9] = mode
+            # veh_data[t][10] = ax
+            # veh_data[t][11] = steer
+            # veh_data[t][12] = length
+            # veh_data[t][13] = width
+
             veh_data = np.array(self.vehicles[i][self.time-10:self.time+1])
 
-            # d를 lane_id 기준으로 수정
+            # d를 현재 차선 기준으로 수정하고 절대값 취하기
             for j in range(len(veh_data)):
                 if veh_data[j][0] == 1:
                     veh_data[j][3] = veh_data[j][3] - self.D_list[1]
@@ -181,13 +216,9 @@ class Environments(object):
                     veh_data[j][3] = veh_data[j][3] - self.D_list[2]
                 elif veh_data[j][0] == 3:
                     veh_data[j][3] = veh_data[j][3] - self.D_list[3]
+                veh_data[j][3] = abs(veh_data[j][3])
 
             pred = self.predict_lc_intention(veh_data)
-            # pred에 확률이 높은 값
-            pred = max(set(pred), key=pred.count)
-
-            # To Do
-            # i번째 veh history data인 veh_data를 활용하여 LC intention에 대한 pred 수행
 
             # Mode 0 : LK, Mode 1 : LC
             gt = "LC" if self.vehicles[i][self.time][9] == 1 else "LK"
@@ -227,7 +258,9 @@ class Environments(object):
 
             text.color = ColorRGBA(1, 1, 1, 1)
             text.scale.z = 5
-            text.text = str(i)+" / True : " + gt+" / Pred : " + pred
+            text.text = str(i) + " / True : " + gt + " / Pred : " + \
+                pred[0] + " ("+str(round(pred[1], 2)) + \
+                " / " + str(round(pred[2], 2)) + ")"
             text.pose.position = Point(
                 self.vehicles[i][self.time][4], self.vehicles[i][self.time][5], 3)
 
