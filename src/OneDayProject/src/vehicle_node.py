@@ -141,17 +141,23 @@ class Environments(object):
         """
         w = 3.4
         v_max = 1.133
-        ##TODO: 차선이 양쪽에 2개니까 2개의 확률을 계산해서 더해야 할까
-        # 현재 차량의 횡방향 거리가 d일 때 차선 유지(LK)일 확률 분포
+        # 현재 차량의 횡방향 거리가 d일 때 차선 유지(LK)일 확률 분포: P(M_LK|C_d)
         def p_lk_given_d(d): return multivariate_normal.pdf(d, 0, w/4)
-        # 현재 차량의 횡방향 거리가 d일 때 차선 변경(LC)일 확률 분포
-        def p_lc_given_d(d): return multivariate_normal.pdf(d, w/2, w/4)
-        # 현재 차량의 횡방향 거리가 d이고, 차선 변경(LK)일 때, 횡방향 속도가 v일 확률 분포
+
+        # 현재 차량의 횡방향 거리가 d일 때 차선 변경(LC)일 확률 분포: P(M_LC|C_d)
+        def p_lc_given_d(d): return multivariate_normal.pdf(
+            d, w/2, w/4) + multivariate_normal.pdf(d, -w/2, w/4)
+
+        # 현재 차량의 횡방향 거리가 d이고, 차선 변경(LK)일 때, 횡방향 속도가 v일 확률 분포: P(A_v|C_d, M_LK)
         def p_v_given_lk_d(v, d): return multivariate_normal.pdf(
             v, (-(2/w)**2*v_max*(d)**2), 0.4)
-        # 현재 차량의 횡방향 거리가 d이고, 차선 변경(LC)일 때, 횡방향 속도가 v일 확률 분포
-        def p_v_given_lc_d(v, d): return multivariate_normal.pdf(
-            v, (-(2/w)**2*v*(d-w/2)**2+v_max), 0.4)
+
+        # 현재 차량의 횡방향 거리가 d이고, 차선 변경(LC)일 때, 횡방향 속도가 v일 확률 분포: P(A_v|C_d, M_LC)
+        def p_v_given_lc_d(v, d):
+            if d >= 0:
+                return multivariate_normal.pdf(v, (-(2/w)**2*v*(d-w/2)**2+v_max), 0.4)
+            else:
+                return multivariate_normal.pdf(v, (-(2/w)**2*v*(d+w/2)**2+v_max), 0.4)
 
         P_lk_given_d = []
         P_lc_given_d = []
@@ -160,9 +166,18 @@ class Environments(object):
         P_v_given_lc_d = []
 
         for t in range(1, len(veh_data) - 1):
-            d = veh_data[t][3]
             w = 3.4
             v_d = (veh_data[t][3] - veh_data[t-1][3]) / 0.05
+
+            # d를 현재 차선 기준으로 수정
+            if veh_data[t][0] == 1:
+                d = veh_data[t][3] - self.D_list[1]
+            elif veh_data[t][0] == 2:
+                d = veh_data[t][3] - self.D_list[2]
+            elif veh_data[t][0] == 3:
+                d = veh_data[t][3] - self.D_list[3]
+            else:
+                d = veh_data[t][3]
 
             P_lk_given_d.append(p_lk_given_d(d))
             P_lc_given_d.append(p_lc_given_d(d))
@@ -176,12 +191,13 @@ class Environments(object):
                 (np.array(P_v_given_lk_d) + np.array(P_v_given_lc_d))
 
         # 의도 파악
+        # TODO: 11개의 데이터를 이용하여 의도를 파악해야 할 듯
         if p_lc[-1] > p_lk[-1]:
             predicted_labels = "LC"
         else:
             predicted_labels = "LK"
 
-        return predicted_labels, p_lc[-1], p_lk[-1]
+        return predicted_labels, p_lc[-1], p_lk[-1], P_lk_given_d[-1], P_lc_given_d[-1], P_v_given_lk_d[-1], P_v_given_lc_d[-1], d
 
     def callback_result(self, data):
 
@@ -189,7 +205,7 @@ class Environments(object):
         Texts = MarkerArray()
 
         for i in range(len(self.vehicles)):
-            # ToDo: i번째 veh history data인 veh_data를 활용하여 LC intention에 대한 pred 수행
+            # TODO: i번째 veh history data인 veh_data를 활용하여 LC intention에 대한 pred 수행
 
             # veh_data[t] = [lane_id, target_lane_id, s, d, global_x, global_y, global_yaw, v, yawrate, mode, ax, steer, length, width]
             # veh_data[t][0] = lane_id
@@ -208,16 +224,6 @@ class Environments(object):
             # veh_data[t][13] = width
 
             veh_data = np.array(self.vehicles[i][self.time-10:self.time+1])
-
-            # d를 현재 차선 기준으로 수정하고 절대값 취하기
-            for j in range(len(veh_data)):
-                if veh_data[j][0] == 1:
-                    veh_data[j][3] = veh_data[j][3] - self.D_list[1]
-                elif veh_data[j][0] == 2:
-                    veh_data[j][3] = veh_data[j][3] - self.D_list[2]
-                elif veh_data[j][0] == 3:
-                    veh_data[j][3] = veh_data[j][3] - self.D_list[3]
-                veh_data[j][3] = abs(veh_data[j][3])
 
             pred = self.predict_lc_intention(veh_data)
 
@@ -266,10 +272,16 @@ class Environments(object):
                 self.vehicles[i][self.time][4], self.vehicles[i][self.time][5], 3)
 
             Texts.markers.append(text)
-            # i = 11인 차량 데이터 출력
-            if i == 11:
+            # i = 6인 차량 데이터 출력
+            if i == 6:
                 print("True : ", gt, " / Pred : ", pred[0])
                 print("LC일 확률: ", pred[1], " / LK일 확률: ", pred[2])
+                print("P(M_LK|C_d): ", pred[3], " / P(M_LC|C_d): ", pred[4])
+                print("P(A_v|C_d, M_LK): ",
+                      pred[5], " / P(A_v|C_d, M_LC): ", pred[6])
+                print("d: ", pred[7], " / v_d: ",
+                      (veh_data[-1][3] - veh_data[-2][3]) / 0.05)
+                print("--------------------------------------------------")
 
         self.sur_pose_plot.publish(Objects)
         self.text_plot.publish(Texts)
